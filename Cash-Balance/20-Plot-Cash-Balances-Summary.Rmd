@@ -1,0 +1,361 @@
+---
+title: "Plot Kansas School District Cash Balances -- Summary"
+author: "Earl F Glynn<br>"
+date: "<small>`r Sys.Date()`</small>"
+output:
+  html_document:
+    code_download: true
+    theme: cerulean
+    toc: yes
+    toc_depth:  3
+    toc_float:
+      collapsed:  yes
+      smooth_scroll: yes
+    number_sections: yes
+    code_folding:  show
+---
+
+```{r setup, echo = FALSE}
+# http://biostat.mc.vanderbilt.edu/wiki/Main/KnitrHtmlTemplate
+require(Hmisc)    # provides knitrSet and other functions
+knitrSet(lang = 'markdown',   # If using blogdown: knitrSet(lang='blogdown')
+         fig.align = 'left',
+         w = 6.5,
+         h = 4.5,
+         cache = FALSE)
+```
+
+`r hidingTOC(buttonLabel = "Outline")`
+
+```{r startYourEngines, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  comment = NA)
+
+time.1 <- Sys.time()
+```
+
+# Setup {.tabset .tabset-fade .tabset-pills}
+
+## {.active}
+
+## Constants
+
+```{r Constants}
+FILE_PREFIX   <- "x"    # no spaces
+```
+
+```{r}
+EXCEL_LIMIT <- 2^20
+```
+
+## Packages
+
+```{r Packages}
+library(tidyverse)
+```
+
+Display formatting
+
+```{r Display}
+library(kableExtra)  # kable_styling
+#library(IRdisplay)   # display_html (needed in Jupyter notebooks)
+```
+
+I/O
+
+```{r IO}
+library(readxl)      # read_xlsx
+library(readr)       # write_csv
+library(writexl)     # write_xlsx
+```
+
+ Graphics
+
+```{r Graphics}
+library(scales)      # comma, comma_format
+```
+
+```{r}
+library(lubridate)
+```
+
+
+## ggplot theme
+
+[ggplot Themes Gallery](https://www.datanovia.com/en/blog/ggplot-themes-gallery/)
+
+```{r ggplotTheme}
+theme_set(theme_minimal() +
+
+          theme(axis.text             = element_text(size = 10),
+                axis.title            = element_text(size = 14),
+
+                plot.caption          = element_text(hjust = c(0.0,1.0)),
+                plot.caption.position = "plot",   # R 4.0.0
+
+                plot.title.position   = "plot",
+                plot.title            = element_text(size = 13),
+                plot.subtitle         = element_text(size = 11))
+           )
+
+COLOR_BAR     <- "skyblue"
+COLOR_OUTLINE <- "grey80"
+```
+
+## Helper functions
+
+```{r Helpers}
+Show <- function(data, caption="", bigMark="",
+                 height = NULL, width = NULL, ...)
+{
+  data                                       %>%
+  kable("html", caption=caption,
+        format.args=list(big.mark=bigMark))  %>%
+  kable_styling(bootstrap_options=c("striped", "bordered", "condensed"),
+                position="left",
+                full_width=FALSE, ...)       %>%
+  scroll_box(height = height, width = width)#%>%      # pixels
+# as.character()                             %>%      # Jupyter Only
+# display_html()                                      # Jupyter Only
+}
+```
+
+# Total Cash Balances from All School Districts
+
+```{r}
+SOURCE <- "Source:  Kansas Department of Education, School Finance Reports"
+stamp  <- paste("watchdoglab.substack.com  efg", format(Sys.time(), "%Y-%m-%d"))
+```
+
+## Read summary data
+
+```{r}
+yearSummaryWide <- read_xlsx("Cash-Balance-Totals-and-Quantiles-by-School-Year-WideFormat.xlsx")
+dim(yearSummaryWide)
+```
+By school year this table shows:
+
+* Number of school districts
+
+* Sum of Cash Balance for all districts
+
+* Quantiles of Cash Balances by school district
+
+* Q0 = 0th percentile (smallest school district cash balance)
+
+* Q0.1 = 10th percentile
+
+* Q0.25 = 25th percentile
+
+* Q0.5 = 50th percentile (median school district cash balance)
+
+* Q0.75 = 75th percentile
+
+* Q0.9 = 90th percentile
+
+* Q1 = 100th percentile (largest school district cash balance)
+
+
+
+```{r}
+yearSummaryWide %>% Show(bigMark = ",")
+```
+
+## Add dates for plots
+
+The `Cash Balances` School Finance Report gives this data description:
+
+```
+Cash Balances for each fund as of July 1 and broken down by district with state totals.
+
+*Cash balances may vary due to timing of the report or possible changes on the CPA audit that are not reflected in the USD budget data*
+```
+
+```{r}
+yearSummary <- 
+  yearSummaryWide   %>%
+  select(SchoolYear, CashSum)  %>%
+  mutate(
+          MidYear   = ymd( paste0( str_sub(SchoolYear, 6, 9), "-01-01"))
+        )           %>%
+  relocate(MidYear)
+```
+
+```{r}
+yearSummary %>%  Show(bigMark = ",")
+```
+
+## Barplot by school year
+
+```{r}
+governor <-
+  tibble(
+          Name = c("Sebelius", "Parkinson", "Brownback",
+                   "Colyer", "Kelly"),
+          
+          TermStart = ymd("2007-07-01",  # for plotting purposes 
+                          "2009-04-28", "2011-01-10", 
+                          "2018-01-31", "2019-01-14"),
+          
+          TermEnd   = ymd("2009-04-28", "2011-01-10", "2018-01-31",
+                          "2019-01-14", 
+                          "2022-12-31"),   # for plotting purposes,
+          
+          fraction1  = c(1.00, 0.93, 1.00, 0.93, 1.00),
+          fraction2  = c(1.00, 0.60, 1.00, 0.60, 1.00),  
+          
+          color     = c("D", "D", "R", "R", "D"),
+          
+          Q = rep(1, 5)  # Kludge for 2nd plot
+        )
+```
+
+```{r}
+governor %>% Show()
+```
+```{r}
+Brownback <- governor %>% filter(Name == "Brownback")
+```
+
+
+```{r SummaryBarplot, fig.width = 8, fig.height = 4}
+ggplot(data = yearSummary) + 
+  geom_col(aes(x = MidYear, y = CashSum), 
+           fill = "skyblue", colour = "grey80") +
+  labs(title    = paste("Total Cash Balances of All Kansas School Districts",
+                        "by School Year"),
+       subtitle = "Cash Balances on July 1 (beginning of fiscal year)",
+       x = "Year",
+       y = "Total Cash Balances",
+       caption = c(SOURCE, stamp))              +
+  scale_y_continuous(labels = scales::dollar)   +
+  theme(axis.text.x = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        legend.position = "none")               +
+  geom_text(data = yearSummary,
+            aes(x = MidYear, y = 20E6,
+                label = SchoolYear),
+                vjust = 0.5, hjust = 0, size = 4, angle = 90)  +
+  geom_segment(data = governor,
+               aes(x = TermStart,  y    =  fraction1 * max(yearSummary$CashSum),
+               xend = TermEnd,     yend =  fraction1 * max(yearSummary$CashSum),
+               linetype = "solid",
+               color = color), size = 2)           +
+  geom_text(data = governor,
+            aes(x = TermStart, y =  1.02 * fraction1 * max(yearSummary$CashSum),
+                label = Name), 
+                vjust = 0.0, hjust = 0, size = 5)  +
+  scale_color_manual(values = c("D" = "blue", "R" = "red"))  +
+  geom_vline(xintercept = c(Brownback$TermStart, Brownback$TermEnd),
+             color = "red", linetype = "dashed")
+    
+```
+Notes:
+
+* Total Cash Balances were the sums of Cash Balances of all Unified School Districts in Kansas.
+
+* There were 295 school districts in 2007-2008, 293 in 2008-2009, and 286 from 2010-2011 till present.
+
+* Values of yearly July 1 Cash Balances by school district, as well as totals of all districts, can be viewed in file Cash-Balances-by-School-District-WideFormat-Edited.xlsx.
+
+# Variability of Cash Balance Across Kansas School Districts
+
+```{r}
+yearSummaryLong <- 
+    read_xlsx("Cash-Balance-Totals-and-Quantiles-by-School-Year-LongFormat.xlsx") %>%
+    select(-n, -nDistrict)  %>%
+    mutate(
+            StartYear   = ymd( paste0( str_sub(SchoolYear, 1, 4), "-07-01"))
+          )           %>%
+  relocate(StartYear)
+
+dim(yearSummaryLong)
+```
+
+```{r}
+yearSummaryLong  %>%  head(7)  %>%  Show(bigMark = ",")
+```
+
+```{r}
+labels = 
+  tibble(Q     = c(0, 0.1, 0.25, 0.5, 0.75, 0.9, 1),
+         label = c("Smallest", "10th percentile", "25th percentile",
+                   "Median", "75th percentle", "90th percentle",
+                   "Largest"))
+
+
+lastPoints <-
+  yearSummaryLong                    %>%
+  filter(SchoolYear == "2021-2022")  %>%
+  inner_join(labels, by = "Q")
+
+dim(lastPoints)
+```
+
+```{r USDQuantiles, fig.width = 8, fig.height = 4}
+ggplot(yearSummaryLong, aes(x = StartYear, y = qValue, group = Q)) + 
+  geom_point(size = 2, color = "black")             +
+  geom_line(size = 1, color = "darkgrey", linetype = "dotted")   +
+  scale_y_log10(breaks = 10^(4:8),
+                labels = scales::label_dollar())    +
+  scale_x_date(breaks = ymd(paste0(2007:2022, "-01-01")),
+               date_labels = "%Y")   +
+  labs(title    = paste("USD Cash Balances of Kansas School Districts",
+                        "by School Year"),
+       subtitle = "Cash Balances on July 1 (beginning of fiscal year)",
+       x = "Year",
+       y = "USD Cash Balances",
+       caption = c(SOURCE, stamp))    + 
+  theme(legend.position = "none")    +
+  geom_segment(data = governor,
+               aes(x = TermStart,  y    =  2 * fraction2 * max(yearSummaryLong$qValue),
+               xend = TermEnd,     yend =  2 * fraction2 * max(yearSummaryLong$qValue),
+               linetype = "solid",
+               color = color), size = 2)      +
+  geom_text(data = governor,
+            aes(x = TermStart, y =  2.1 * fraction2 * max(yearSummaryLong$qValue),
+                label = Name), 
+                vjust = 0.0, hjust = 0, size = 5)  +
+  scale_color_manual(values = c("D" = "blue", "R" = "red")) +
+  geom_vline(xintercept = c(Brownback$TermStart, Brownback$TermEnd),
+             color = "red", linetype = "dashed")   +
+  geom_text(data = lastPoints, label = lastPoints$label,
+            adj = -0.1, color = "black", size = 3)
+
+```
+
+Notes:  
+
+* The "smallest" values were negative in 2010-2011 and 2013-2014 and cannot be included as part of a log scale..
+
+* In 2010-2011 **USD 473, Chapman (Dickinson County)**, showed a deficit of $18,473,393 on 7/1/2010 for Capital Outlay (fund 16), and a Total USD Cash Balance deficit of $16,107,103.  See files Cash-Balances-2010-2011.xls and 2010-2011-Cash-Balance.xls.  
+
+* In 2013-2014 **USD 475, Geary County Schools**, showed a deficit of 33,976,147 on 7/1/2013 for Federal (fund 07), and a Total USD Cash Balance deficit of $10,663,094.  See files Cash-Balances-2013-2014.xls and 2013-2014-Cash-Balance.xls.
+
+* Quantile values (0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0) by School Year can be found in file Cash-Balance-Totals-and-Quantiles-by-School-Year-WideFormat.xlsx.  
+
+
+# Epilog {.tabset .tabset-fade .tabset-pills}
+
+## {.active}
+
+## Session Info
+
+```{r devtoolsSessionInfo}
+devtools::session_info()
+```
+
+</div>
+
+```{r epilogDeltaTime, echo=FALSE}
+time.2 <- Sys.time()
+processingTime <- paste("Processing time:", sprintf("%.1f",
+                        as.numeric(difftime(time.2,
+                                            time.1, units="secs"))), "secs\n")
+```
+
+`r processingTime`
+`r format(time.2, "%Y-%m-%d %H%M")`
+

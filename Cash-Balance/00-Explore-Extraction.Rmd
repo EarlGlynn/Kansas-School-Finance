@@ -1,0 +1,303 @@
+---
+title: "Explore Extracting Kansas School District Cash Balances from Excel Files"
+author: "Earl F Glynn<br>"
+date: "<small>`r Sys.Date()`</small>"
+output:
+  html_document:
+    code_download: true
+    theme: cerulean
+    toc: yes
+    toc_depth:  3
+    toc_float:
+      collapsed:  yes
+      smooth_scroll: yes
+    number_sections: yes
+    code_folding:  show
+---
+
+```{r setup, echo = FALSE}
+# http://biostat.mc.vanderbilt.edu/wiki/Main/KnitrHtmlTemplate
+require(Hmisc)    # provides knitrSet and other functions
+knitrSet(lang = 'markdown',   # If using blogdown: knitrSet(lang='blogdown')
+         fig.align = 'left',
+         w = 6.5,
+         h = 4.5,
+         cache = FALSE)
+```
+
+`r hidingTOC(buttonLabel = "Outline")`
+
+```{r startYourEngines, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  comment = NA)
+
+time.1 <- Sys.time()
+```
+
+# Setup {.tabset .tabset-fade .tabset-pills}
+
+## {.active}
+
+## Constants
+
+```{r}
+EXCEL_LIMIT <- 2^20
+```
+
+## Packages
+
+```{r Packages}
+library(tidyverse)
+```
+
+Display formatting
+
+```{r Display}
+library(kableExtra)  # kable_styling
+#library(IRdisplay)   # display_html (needed in Jupyter notebooks)
+```
+
+I/O
+
+```{r IO}
+library(readxl)      # read_xlsx
+library(readr)       # write_csv
+library(writexl)     # write_xlsx
+```
+
+ Graphics
+
+```{r Graphics}
+library(scales)      # comma, comma_format
+library(latex2exp)
+```
+
+## ggplot theme
+
+[ggplot Themes Gallery](https://www.datanovia.com/en/blog/ggplot-themes-gallery/)
+
+```{r ggplotTheme}
+theme_set(theme_minimal() +
+
+          theme(axis.text             = element_text(size = 10),
+                axis.title            = element_text(size = 14),
+
+                plot.caption          = element_text(hjust = c(0.0,1.0)),
+                plot.caption.position = "plot",   # R 4.0.0
+
+                plot.title.position   = "plot",
+                plot.title            = element_text(size = 14),
+                plot.subtitle         = element_text(size = 11)
+               )
+           )
+
+COLOR_BAR     <- "skyblue"
+COLOR_OUTLINE <- "grey80"
+```
+
+## Helper functions
+
+```{r Helpers}
+Show <- function(data, caption="", bigMark="",
+                 height = NULL, width = NULL, ...)
+{
+  data                                       %>%
+  kable("html", caption=caption,
+        format.args=list(big.mark=bigMark))  %>%
+  kable_styling(bootstrap_options=c("striped", "bordered", "condensed"),
+                position="left",
+                full_width=FALSE, ...)       %>%
+  scroll_box(height = height, width = width) #  %>%
+# as.character()                             %>%      # Jupyter Only
+# display_html()                                      # Jupyter Only
+}
+```
+
+TO DO:  Use [new way with quantiles](https://www.tidyverse.org/blog/2020/03/dplyr-1-0-0-summarise/) below
+
+```{r}
+statSummary <- function(d, variables)
+{
+  results <- NULL
+
+  for (v in variables)
+  {
+    values <- pull(d, v)
+    results <- bind_rows(results,
+                         tibble(
+                                Variable = v,
+                                N        = length(values),
+                                Sum      = sum(values, na.rm = TRUE),
+                                Mean     = mean(values, na.rm = TRUE),
+                                StdDev   = sd(values,   na.rm = TRUE),
+                                Min      = min(values,  na.rm = TRUE),
+                                Q10      = quantile(values, 0.10, na.rm = TRUE),
+                                Q25      = quantile(values, 0.25, na.rm = TRUE),
+                                Median   = median(values,         na.rm = TRUE),
+                                Q75      = quantile(values, 0.75, na.rm = TRUE),
+                                Q90      = quantile(values, 0.90, na.rm = TRUE),
+                                Max      = max(values,            na.rm = TRUE)
+                               )
+                        )
+  }
+
+  results
+}
+```                          
+
+# Data Source 
+
+1. Start on this page:  [Kansas Department of Education Data Central](https://datacentral.ksde.org/cpfs.aspx)
+
+2. Selections
+
+* All Unified School Districts
+
+* General Fund
+
+* USD Budget Summary - Cash Balance
+
+* School Year:  2007-2008 through 2021-2022
+
+3. Save to Excel file:  yyyy-yyyy-Cash-Balance.xls
+
+
+# Read sample file
+
+```{r}
+filename <- "2007-2008-Cash-Balance.xls"
+#filename <- "2020-2021-Cash-Balance.xls"
+header <- read_xls(filename, n_max = 6, col_names = FALSE)
+districts <- read_xls(filename, skip = 6)
+```
+# Header
+
+```{r}
+header[1, 1]
+```
+
+
+```{r}
+schoolYear <- str_sub(header[1,1], 1, 9)
+schoolYear
+```
+
+
+```{r}
+OK1 <- header[3,1] == "All Unified School Districts"
+OK1
+```
+
+```{r}
+OK2 <- header[5, 1] == "USD Budget Summary - Cash Balance"
+OK2
+```
+
+# Data
+
+## Raw data
+
+```{r}
+districts  %>%  head()  %>%  Show(bigMark = ",")
+```
+
+```{r}
+districts  %>%  tail()  %>%  Show(bigMark = ",")
+```
+
+## Count summary
+
+```{r}
+districts                                   %>%
+  summarize(n  = n(),
+            nUSD = n_distinct(USD),
+            nName = n_distinct(`USD Name`),
+            nCounty = n_distinct(County))   %>%
+  Show()
+```
+## Duplicate Names
+
+```{r}
+counts <- table(districts$`USD Name`)
+counts[counts > 1]
+```
+
+```{r}
+districts  %>%
+  filter(`USD Name` == "Blue Valley")  %>%
+  Show()
+```
+
+
+## Largest Districts
+
+```{r}
+districts                           %>%  
+  slice_max(`Cash Balance`, n = 10) %>%
+  Show(bigMark = ",") 
+```
+
+
+## Smallest Districts
+
+```{r}
+districts                           %>%  
+  slice_min(`Cash Balance`, n = 10) %>%
+  Show(bigMark = ",") 
+```
+
+# Density Plot
+
+Use log scale since the range is quite large
+
+```{r}
+CAPTION <- "Source:  KSDE Data Central - Kansas Education Reports"
+stamp   <- paste("watchdoglab.substack.com  efg", format(Sys.time(), "%Y-%m-%d"))
+```
+
+
+```{r DensityPlot}
+ggplot(districts, aes(x = `Cash Balance`, y = ..density..))         + 
+  geom_histogram(fill = "skyblue", colour = "grey80", bins = 20)    +
+  geom_density()                                                    +
+  scale_x_log10(breaks = 10^(4:8),
+                labels = scales::label_dollar())                    +
+  labs(title = "Kansas Unified School District Budget Summmary - Cash Balances",
+       subtitle = paste("KSDE Comparative Performance and Fiscal System,", 
+                        schoolYear, "school year"),
+       x = "USD Cash Balance [$]",
+       y = "Density",
+       caption = c(CAPTION, stamp))                                 +
+  theme(plot.caption  = element_text(hjust=c(0.0, 1.0)))
+```
+
+
+```{r}
+statSummary(districts, c("Cash Balance"))  %>%  Show(bigMark = ",")
+```
+
+
+
+# Epilog {.tabset .tabset-fade .tabset-pills}
+
+## {.active}
+
+## Session Info
+
+```{r devtoolsSessionInfo}
+devtools::session_info()
+```
+
+</div>
+
+```{r epilogDeltaTime, echo=FALSE}
+time.2 <- Sys.time()
+processingTime <- paste("Processing time:", sprintf("%.1f",
+                        as.numeric(difftime(time.2,
+                                            time.1, units="secs"))), "secs\n")
+```
+
+`r processingTime`
+`r format(time.2, "%Y-%m-%d %H%M")`
+

@@ -1,0 +1,354 @@
+---
+title: "Extract Kansas School District Cash Balances from Excel Files"
+author: "Earl F Glynn<br>"
+date: "<small>`r Sys.Date()`</small>"
+output:
+  html_document:
+    code_download: true
+    theme: cerulean
+    toc: yes
+    toc_depth:  3
+    toc_float:
+      collapsed:  yes
+      smooth_scroll: yes
+    number_sections: yes
+    code_folding:  show
+---
+
+```{r setup, echo = FALSE}
+# http://biostat.mc.vanderbilt.edu/wiki/Main/KnitrHtmlTemplate
+require(Hmisc)    # provides knitrSet and other functions
+knitrSet(lang = 'markdown',   # If using blogdown: knitrSet(lang='blogdown')
+         fig.align = 'left',
+         w = 6.5,
+         h = 4.5,
+         cache = FALSE)
+```
+
+`r hidingTOC(buttonLabel = "Outline")`
+
+```{r startYourEngines, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  comment = NA)
+
+time.1 <- Sys.time()
+```
+
+# Setup {.tabset .tabset-fade .tabset-pills}
+
+## {.active}
+
+## Constants
+
+```{r Constants}
+FILE_PREFIX   <- "x"    # no spaces
+```
+
+```{r}
+EXCEL_LIMIT <- 2^20
+```
+
+## Packages
+
+```{r Packages}
+library(tidyverse)
+```
+
+Display formatting
+
+```{r Display}
+library(kableExtra)  # kable_styling
+#library(IRdisplay)   # display_html (needed in Jupyter notebooks)
+```
+
+I/O
+
+```{r IO}
+library(readxl)      # read_xlsx
+library(readr)       # write_csv
+library(writexl)     # write_xlsx
+```
+
+ Graphics
+
+```{r Graphics}
+library(scales)      # comma, comma_format
+```
+
+```{r}
+library(lubridate)
+```
+
+
+## ggplot theme
+
+[ggplot Themes Gallery](https://www.datanovia.com/en/blog/ggplot-themes-gallery/)
+
+```{r ggplotTheme}
+theme_set(theme_minimal() +
+
+          theme(axis.text             = element_text(size = 10),
+                axis.title            = element_text(size = 14),
+
+                plot.caption          = element_text(hjust = c(0.0,1.0)),
+                plot.caption.position = "plot",   # R 4.0.0
+
+                plot.title.position   = "plot",
+                title                 = element_text(size = 14))
+           )
+
+COLOR_BAR     <- "skyblue"
+COLOR_OUTLINE <- "grey80"
+```
+
+## Helper functions
+
+```{r Helpers}
+Show <- function(data, caption="", bigMark="",
+                 height = NULL, width = NULL, ...)
+{
+  data                                       %>%
+  kable("html", caption=caption,
+        format.args=list(big.mark=bigMark))  %>%
+  kable_styling(bootstrap_options=c("striped", "bordered", "condensed"),
+                position="left",
+                full_width=FALSE, ...)       %>%
+  scroll_box(height = height, width = width)#%>%      # pixels
+# as.character()                             %>%      # Jupyter Only
+# display_html()                                      # Jupyter Only
+}
+```
+
+# Data Source 
+
+1. Start on this page:  [Kansas Department of Education Data Central](https://datacentral.ksde.org/cpfs.aspx)
+
+2. Selections
+
+* All Unified School Districts
+
+* General Fund
+
+* USD Budget Summary - Cash Balance
+
+* School Year:  2007-2008 through 2021-2022
+
+3. Save to Excel file:  yyyy-yyyy-Cash-Balance.xls
+
+Details of Cash balances can be found in [School Finance Reports](https://datacentral.ksde.org/school_finance_reports.aspx)
+
+# Processing functions
+
+Redundant checks to verify the data format and content is the same across all files.
+
+```{r}
+processHeader <- function(filename)
+{
+  header <- read_xls(filename, n_max = 6, col_names = FALSE)
+  SchoolYear <- str_sub(header[1,1], 1, 9)
+  Districts  <- header[3, 1, drop = TRUE] 
+  Report     <- header[5, 1, drop = TRUE] 
+  
+  tibble(File = filename, SchoolYear = SchoolYear, Districts = Districts, Report = Report)
+}
+```
+
+
+```{r}
+processYear <- function(filename)
+{
+  districts <- 
+    read_xls(filename, skip = 6)                 %>%
+    mutate(SchoolYear = str_sub(filename, 1, 9)) %>%
+    relocate(SchoolYear)
+  
+  districts
+}
+```
+
+# Create list of Excel files
+
+```{r}
+ files <- 
+  list.files(path = ".", pattern = glob2rx("*-Cash-Balance.xls")) 
+
+length(files)
+```
+
+```{r}
+files
+```
+
+# Process Headers
+
+Verify `File` names and `SchoolYear` values in header are consistent.
+
+```{r}
+headerInfo <-
+  files  %>%
+  map_df(processHeader)
+
+dim(headerInfo)
+```
+
+```{r}
+headerInfo %>% Show(height = "200px")
+```
+
+```{r}
+all( str_sub(headerInfo$File, 1, 9) == headerInfo$SchoolYear )
+```
+
+# Process USD data 
+
+```{r}
+districtsYears <-
+  files  %>%
+  map_dfr(processYear)
+
+dim(districtsYears)
+```
+
+## Sample data
+
+Recall USD Names are not unique.  `Blue Valley` school district is in both Johnson and Riley counties.
+
+```{r}
+districtsYears  %>%  head(3)  %>%  Show(bigMark = ",")
+```
+
+Let's combine `USD Name` and `County` into single `District` field, which will be unique.
+
+```{r}
+districtsYears <- 
+  districtsYears    %>%
+  mutate(District = paste0(`USD Name`, " [", County, "]") )
+```
+
+```{r}
+districtsYears  %>%  head(3)  %>%  Show(bigMark = ",")
+```
+
+
+## Write raw data to files
+
+### Long Format
+
+Long format for `ggplot2` plots
+
+```{r}
+write_xlsx(districtsYears, "Cash-Balances-by-School-District-LongFormat.xlsx")
+```
+
+### Wide format
+
+```{r}
+districtsYearsWide <- 
+  districtsYears      %>%
+  pivot_wider(names_from   = SchoolYear,
+              values_from  = `Cash Balance`)
+
+nrow(districtsYearsWide)
+```
+
+```{r}
+districtsYearsWide  %>%  head(3)  %>%  Show()
+```
+For humans and other programs
+
+```{r}
+write_xlsx(districtsYearsWide, "Cash-Balances-by-School-District-WideFormat.xlsx")
+```
+
+## Summary stats
+
+```{r}
+districtsYears           %>%
+  summarize( 
+             n           = n(),
+             nSchoolYear = n_distinct(SchoolYear),
+             nUSD        = n_distinct(USD),
+             nUSDname    = n_distinct(`USD Name`),
+             nCounty     = n_distinct(County),
+             nDistrict   = n_distinct(District)
+           )             %>%
+  Show()
+```
+## Summaries by Year
+
+```{r}
+quantiles <- quantiles <- c(0.0, 0.10, 0.25, 0.50, 0.75, 0.90, 1.00)
+```
+
+### Long Format
+
+for `ggplot2` plots
+
+```{r}
+yearSummaryLong <-
+  districtsYears       %>%
+  group_by(SchoolYear) %>%
+  summarize(
+             n         = n(),
+             nDistrict = n_distinct(District),
+             CashSum   = sum(`Cash Balance`, na.rm = TRUE),
+             
+             qValue    = quantile(`Cash Balance`, quantiles),
+             Q         = quantiles,
+             .groups = "drop"
+           )           %>%
+  ungroup()           
+
+yearSummaryLong %>% head(14) %>% Show(bigMark = ",")
+```
+
+### Wide format
+
+for humans and some other programs
+
+```{r}
+yearSummaryWide <- 
+  yearSummaryLong  %>%
+  pivot_wider(names_from   = Q,
+              names_prefix = "CashQ",
+              values_from  = qValue)
+       
+```
+
+```{r}
+yearSummaryWide %>%  Show(bigMark = ",")  
+```
+
+Negative values:
+
+* 2010-2011:  USD 473, Chapman [Dickinson County], $-16 million  [related to Chapman tornado in 2008?]
+* 2013-2014:  USD 475, Geary County Schools, $-10.6 million
+
+```{r}
+write_xlsx(yearSummaryLong, "Cash-Balance-Totals-and-Quantiles-by-School-Year-LongFormat.xlsx")
+write_xlsx(yearSummaryWide, "Cash-Balance-Totals-and-Quantiles-by-School-Year-WideFormat.xlsx")
+```
+
+# Epilog {.tabset .tabset-fade .tabset-pills}
+
+## {.active}
+
+## Session Info
+
+```{r devtoolsSessionInfo}
+devtools::session_info()
+```
+
+</div>
+
+```{r epilogDeltaTime, echo=FALSE}
+time.2 <- Sys.time()
+processingTime <- paste("Processing time:", sprintf("%.1f",
+                        as.numeric(difftime(time.2,
+                                            time.1, units="secs"))), "secs\n")
+```
+
+`r processingTime`
+`r format(time.2, "%Y-%m-%d %H%M")`
+

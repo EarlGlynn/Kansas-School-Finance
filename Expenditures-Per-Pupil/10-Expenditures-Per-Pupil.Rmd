@@ -1,0 +1,563 @@
+---
+title: "Kansas School District Expenditures Per Pupil"
+author: "Earl F Glynn<br>"
+date: "<small>`r Sys.Date()`</small>"
+output:
+  html_document:
+    code_download: true
+    theme: cerulean
+    toc: yes
+    toc_depth:  3
+    toc_float:
+      collapsed:  yes
+      smooth_scroll: yes
+    number_sections: yes
+    code_folding:  show
+---
+
+```{r setup, echo = FALSE}
+# http://biostat.mc.vanderbilt.edu/wiki/Main/KnitrHtmlTemplate
+require(Hmisc)    # provides knitrSet and other functions
+knitrSet(lang = 'markdown',   # If using blogdown: knitrSet(lang='blogdown')
+         fig.align = 'left',
+         w = 6.5,
+         h = 4.5,
+         cache = FALSE)
+```
+
+`r hidingTOC(buttonLabel = "Outline")`
+
+```{r startYourEngines, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  comment = NA)
+
+time.1 <- Sys.time()
+```
+
+# Setup {.tabset .tabset-fade .tabset-pills}
+
+## {.active}
+
+## Constants
+
+```{r Constants}
+FILE_PREFIX   <- "Expenditures-Per-Pupil"    # no spaces
+```
+
+```{r}
+EXCEL_LIMIT <- 2^20
+```
+
+## Packages
+
+```{r Packages}
+library(tidyverse)
+library(lubridate)
+```
+
+Display formatting
+
+```{r Display}
+library(kableExtra)  # kable_styling
+#library(IRdisplay)   # display_html (needed in Jupyter notebooks)
+```
+
+I/O
+
+```{r IO}
+library(readxl)      # read_xlsx
+library(readr)       # write_csv
+library(writexl)     # write_xlsx
+```
+
+ Graphics
+
+```{r Graphics}
+library(scales)      # comma, comma_format
+```
+
+## ggplot theme
+
+[ggplot Themes Gallery](https://www.datanovia.com/en/blog/ggplot-themes-gallery/)
+
+```{r ggplotTheme}
+theme_set(theme_minimal() +
+
+          theme(axis.text             = element_text(size = 10),
+                axis.title            = element_text(size = 14),
+
+                plot.caption          = element_text(hjust = c(0.0,1.0)),
+                plot.caption.position = "plot",   # R 4.0.0
+
+                plot.title.position   = "plot",
+                plot.title            = element_text(size = 13))
+           )
+
+COLOR_BAR     <- "skyblue"
+COLOR_OUTLINE <- "grey80"
+```
+
+## Helper functions
+
+```{r Helpers}
+Show <- function(data, caption="", bigMark="",
+                 height = NULL, width = NULL, ...)
+{
+  data                                       %>%
+  kable("html", caption=caption,
+        format.args=list(big.mark=bigMark))  %>%
+  kable_styling(bootstrap_options=c("striped", "bordered", "condensed"),
+                position="left",
+                full_width=FALSE, ...)       %>%
+  scroll_box(height = height, width = width)#%>%      # pixels
+# as.character()                             %>%      # Jupyter Only
+# display_html()                                      # Jupyter Only
+}
+```
+
+# Extract from Excel Files
+
+## Data Source 
+
+1. Start on this page:  [Kansas Department of Education Data Central](https://datacentral.ksde.org/)
+
+2. School Finance Reports / [School Finance Reports Warehouse](https://datacentral.ksde.org/school_finance_reports.aspx)
+
+3. Selections
+
+* Report:  Expenditures Per Pupil
+
+* School Year:  2007-2008 through 2020-2021
+
+* Display Report
+
+4. Save to Excel file:  Expenditures-Per-Pupil-yyyy-yyyy.xls
+
+## Processing functions
+
+Redundant checks to verify the data format and content is the same across all files.
+
+row index is zero origin
+
+```{r}
+processHeader <- function(filename)
+{
+  header <- read_xls(filename, n_max = 5, col_names = FALSE)
+  
+  SchoolYear <- str_sub(filename, 24, 32)
+  
+  heading    <- header[1, 1, drop = TRUE]
+  
+  ColumnSchoolYear <- header[4, 4, drop = TRUE]
+  
+  USD        <- header[5, 1, drop = TRUE]
+  County     <- header[5, 3, drop = TRUE]
+  FTE        <- header[5, 4, drop = TRUE]
+  PerPupil   <- header[5, 5, drop = TRUE]
+  
+  tibble(File = filename, SchoolYear = SchoolYear,
+         ColumnSchoolYear, 
+         heading = heading, USD, County, FTE, PerPupil)
+}
+```
+
+Assign column names here since files have school year in most columns and
+we need common columns names across all files.
+
+```{r}
+processYear <- function(filename)
+{
+  districts <- 
+    read_xls(filename, skip = 5, col_names = FALSE) %>%
+    rename(
+            USD              = ...1,
+            `USD Name`       = ...2,
+            County           = ...3,
+            `FTE Enroll`     = ...4, 
+            `Capital Outlay` = ...5, 
+            `Bond Interest`  = ...6,
+            `All Others`     = ...7,
+            `Total Expend`   = ...8
+          )                                         %>%
+    filter(!is.na(USD))   %>%   # remove blank line before TOTALS line   
+    mutate(SchoolYear = str_sub(filename, 24, 32))  %>%
+    relocate(SchoolYear)
+    
+  districts
+}
+```
+
+## Create list of Excel files
+
+```{r}
+ files <- 
+  list.files(path = ".", pattern = glob2rx("Expenditures-Per-Pupil-*.xls")) 
+
+length(files)
+```
+
+```{r}
+files
+```
+
+```{r}
+filename <- files[1]
+```
+
+## Process Headers
+
+Verify `File` names and `SchoolYear` values in header are consistent.
+
+```{r}
+headerInfo <-
+  files  %>%
+  map_df(processHeader)
+
+dim(headerInfo)
+```
+Make sure heading is the same for all files.
+
+```{r}
+headerInfo %>% Show(height = "200px")
+```
+
+```{r}
+all( (paste0(str_sub(headerInfo$SchoolYear, 1, 5), str_sub(headerInfo$SchoolYear, 8, 9)) == 
+      headerInfo$ColumnSchoolYear) %>% as.vector() )
+```
+
+
+```{r}
+all( (headerInfo$heading == "USD Expenditures Per Pupil") %>% as.vector() )
+```
+```{r}
+all( (headerInfo$USD == "USD") %>% as.vector() )
+```
+```{r}
+all( (headerInfo$County == "County Name") %>% as.vector() )
+```
+```{r}
+all( (headerInfo$FTE == "FTE Enroll") %>% as.vector() )
+```
+
+```{r}
+all( (headerInfo$PerPupil == "Per Pupil") %>% as.vector() )
+```
+
+With `TRUE` for all the above checks, let's assume we can assign column names to replace the ones in the files with school year in several columns.
+
+## Process USD data 
+
+```{r}
+districtsYears <-
+  files  %>%
+  map_dfr(processYear)
+
+dim(districtsYears)
+```
+
+## Sample data
+
+Recall USD Names are not unique.  `Blue Valley` school district is in both Johnson and Riley counties.
+
+```{r}
+districtsYears  %>%  head(3)  %>%  Show(bigMark = ",")
+```
+
+Let's combine `USD Name` and `County` into single `District` field, which will be unique.
+
+```{r}
+districtsYears <- 
+  districtsYears    %>%
+  mutate(District = paste0(`USD Name`, " [", County, "]") )
+```
+
+```{r}
+districtsYears  %>%  head(3)  %>%  Show(bigMark = ",")
+```
+
+## Write raw data to files
+
+### Long Format
+
+Long format for `ggplot2` plots
+
+```{r}
+write_xlsx(districtsYears, 
+           paste0(FILE_PREFIX, "-by-School-District-LongFormat.xlsx"))
+```
+
+## Summary stats
+
+```{r}
+districtsYears           %>%
+  summarize( 
+             n           = n(),
+             nSchoolYear = n_distinct(SchoolYear),
+             nUSD        = n_distinct(USD),
+             nUSDname    = n_distinct(`USD Name`),
+             nCounty     = n_distinct(County),
+             nDistrict   = n_distinct(District)
+           )             %>%
+  Show()
+```
+
+# FTE Enrollment
+
+```{r}
+FTEWide <- 
+  districtsYears                            %>%
+  select(SchoolYear, USD, `USD Name`, County, District, `FTE Enroll`)  %>%
+  pivot_wider(names_from   = SchoolYear,
+              values_from  = `FTE Enroll`)  %>%
+  arrange(USD)
+
+nrow(FTEWide)
+```
+
+```{r}
+FTEWide  %>%  head(3)  %>%  Show()
+```
+
+For humans and other programs
+
+```{r}
+write_xlsx(FTEWide, "FTE-Enrollment-by-School-District-WideFormat.xlsx")
+```
+
+## Density Plot - Latest Year
+
+Shows FTE distribution across the state
+
+```{r}
+quantiles <- quantiles <- c(0.0, 0.10, 0.25, 0.50, 0.75, 0.90, 1.00)
+```
+
+```{r}
+SOURCE <- "Source:  KSDE Data Central - School Finance Reports"
+stamp  <- paste("watchdoglab.substack.com  efg", format(Sys.time(), "%Y-%m-%d"))
+```
+
+```{r FTE_Density, fig.width = 8, fig.height = 4}          
+schoolYear <- "2020-2021"
+
+districtsYears  %>%
+  filter(startsWith(USD, "D"), SchoolYear == schoolYear )  %>%
+
+  ggplot(aes(x = `FTE Enroll`, y = ..density..))                      + 
+    geom_histogram(fill = "skyblue", colour = "grey80", bins = 20)    +
+    geom_density()                                                    +
+    scale_x_log10(breaks = c(   100,   250,   500, 
+                               1000,  2500,  5000, 
+                              10000, 25000, 50000,
+                             1000000),
+                  labels = comma)                                     +
+    labs(title = "Kansas School Districts - FTE Enrollment",
+         subtitle = paste(schoolYear, "school year"),
+         x = "Full-Time Equivalent Enrollment",
+         y = "Density",
+         caption = c(SOURCE, stamp))                                 +
+    theme(plot.caption  = element_text(hjust=c(0.0, 1.0)))
+```
+
+# Total Expenditures per Pupil
+
+For now ignore the breakdown in the files and only look at "Total Expend Per Pupil"
+
+```{r}
+ExpendPerPupilWide <-
+  districtsYears                              %>%
+  select(SchoolYear, USD, `USD Name`, County, District, 
+         `Total Expend`)                      %>%
+  pivot_wider(names_from   = SchoolYear,
+              values_from  = `Total Expend`)  %>%
+  arrange(USD)
+
+nrow(ExpendPerPupilWide)
+```
+
+```{r}
+ExpendPerPupilWide  %>%  head(3)  %>%  Show()
+```
+
+For humans and other programs
+
+```{r}
+write_xlsx(ExpendPerPupilWide,
+           paste0(FILE_PREFIX, "-by-School-District-WideFormat.xlsx"))
+```
+
+## Density Plot - Latest Year
+
+Shows Expenditures Per Pupil distribution across the state
+
+```{r}
+quantiles <- quantiles <- c(0.0, 0.10, 0.25, 0.50, 0.75, 0.90, 1.00)
+```
+
+```{r ExpendPerPupil_Density, fig.width = 8, fig.height = 4}   
+schoolYear <- "2020-2021"
+
+districtsYears  %>%
+  filter(startsWith(USD, "D"), SchoolYear == schoolYear )  %>%
+
+  ggplot(aes(x = `Total Expend`, y = ..density..))                    +
+    geom_histogram(fill = "skyblue", colour = "grey80", bins = 20)    +
+    geom_density()                                                    +
+    scale_x_continuous(labels = scales::label_dollar())               +
+    labs(title = "Kansas School Districts - Total Expenditures Per Pupil",
+         subtitle = paste(schoolYear, "school year"),
+         x = "Total Expenditures Per Pupil",
+         y = "Density",
+         caption = c(SOURCE, stamp))                                  +
+    theme(plot.caption  = element_text(hjust=c(0.0, 1.0)))
+```
+
+# State Summary by School Year
+
+```{r}
+yearSummary <- 
+  districtsYears  %>%
+  filter(USD == "TOTALS") %>%
+  select(SchoolYear, `FTE Enroll`, `Total Expend`)  %>%
+  mutate(
+          MidYear   = ymd( paste0( str_sub(SchoolYear, 6, 9), "-01-01"))
+        )           %>%
+  relocate(MidYear)
+
+dim(yearSummary)
+```
+```{r}
+yearSummary %>% Show(bigMark = ",")
+```
+
+```{r}
+write_xlsx(yearSummary %>% select(-MidYear), 
+           paste0(FILE_PREFIX, "-Summary-by-School-Year.xlsx"))
+```
+
+
+## Governor information
+
+```{r}
+governor <-
+  tibble(
+          Name = c("Sebelius", "Parkinson", "Brownback",
+                   "Colyer", "Kelly"),
+          
+          TermStart = ymd("2007-07-01",  # for plotting purposes 
+                          "2009-04-28", "2011-01-10", 
+                          "2018-01-31", "2019-01-14"),
+          
+          TermEnd   = ymd("2009-04-28", "2011-01-10", "2018-01-31",
+                          "2019-01-14", 
+                          "2021-12-31"),   # for plotting purposes,
+          
+          fraction1  = c(1.00, 0.93, 1.00, 0.93, 1.00),
+          fraction2  = c(1.00, 0.60, 1.00, 0.60, 1.00),  
+          
+          color     = c("D", "D", "R", "R", "D")
+        )
+
+Brownback <- governor %>% filter(Name == "Brownback")
+```
+
+
+## FTE State Summary by Year
+
+```{r FTESummary, fig.width = 8, fig.height = 4}
+ggplot(data = yearSummary) +
+  geom_col(aes(x = MidYear, y = `FTE Enroll`),
+           fill = "skyblue", colour = "grey80") +
+  labs(title    = paste("FTE Enrollment of All Kansas School Districts",
+                        "by School Year"),
+       x = "Year",
+       y = "Full-Time Equivalent Enrollment",
+       caption = c(SOURCE, stamp))              +
+  scale_y_continuous(labels = scales::comma,
+                     breaks = 100000 * 0:5)     +
+  theme(axis.text.x = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        legend.position = "none")               +
+  geom_text(data = yearSummary,
+            aes(x = MidYear, y = 0,
+                label = SchoolYear),
+                vjust = 0.5, hjust = -0.1, size = 4, angle = 90)   +
+  geom_segment(data = governor,
+               aes(x = TermStart,  y    =  fraction1 * max(yearSummary$`FTE Enroll`) * 1.1,
+               xend = TermEnd,     yend =  fraction1 * max(yearSummary$`FTE Enroll`) * 1.1,
+               linetype = "solid",
+               color = color), size = 2)        +
+  geom_text(data = governor,
+            aes(x = TermStart, y =  1.02 * fraction1 * max(yearSummary$`FTE Enroll`) * 1.1,
+                label = Name),
+                vjust = 0.0, hjust = 0, size = 5)  +
+  scale_color_manual(values = c("D" = "blue", "R" = "red"))  +
+  geom_vline(xintercept = c(Brownback$TermStart, Brownback$TermEnd),
+             color = "red", linetype = "dashed")
+
+ 
+  
+```                  
+
+ ## Total Expenditures per Pupil
+
+```{r TotalExpendSummary, fig.width = 8, fig.height = 4}
+ggplot(data = yearSummary) +
+  geom_col(aes(x = MidYear, y = `Total Expend`),
+           fill = "skyblue", colour = "grey80") +
+  labs(title    = paste("Total Expenditures Per Pupil of All Kansas School Districts",
+                        "by School Year"),
+       x = "Year",
+       y = "Total Expenditures Per Pupil [$]",
+       caption = c(SOURCE, stamp))              +
+   scale_y_continuous(labels = scales::label_dollar())            +
+  theme(axis.text.x = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        legend.position = "none")               +
+  geom_text(data = yearSummary,
+            aes(x = MidYear, y = 0,
+                label = SchoolYear),
+                vjust = 0.5, hjust = -0.1, size = 4, angle = 90)  +
+  geom_segment(data = governor,
+               aes(x = TermStart,  y    =  fraction1 * max(yearSummary$`Total Expend`),
+               xend = TermEnd,     yend =  fraction1 * max(yearSummary$`Total Expend`),
+               linetype = "solid",
+               color = color), size = 2)        +
+  geom_text(data = governor,
+            aes(x = TermStart, y =  1.02 * fraction1 * max(yearSummary$`Total Expend`),
+                label = Name),
+                vjust = 0.0, hjust = 0, size = 5)  +
+  scale_color_manual(values = c("D" = "blue", "R" = "red"))  +
+  geom_vline(xintercept = c(Brownback$TermStart, Brownback$TermEnd),
+             color = "red", linetype = "dashed")
+
+ 
+  
+```                  
+  
+# Epilog {.tabset .tabset-fade .tabset-pills}
+
+## {.active}
+
+## Session Info
+
+```{r devtoolsSessionInfo}
+devtools::session_info()
+```
+
+</div>
+
+```{r epilogDeltaTime, echo=FALSE}
+time.2 <- Sys.time()
+processingTime <- paste("Processing time:", sprintf("%.1f",
+                        as.numeric(difftime(time.2,
+                                            time.1, units="secs"))), "secs\n")
+```
+
+`r processingTime`
+`r format(time.2, "%Y-%m-%d %H%M")`
+
