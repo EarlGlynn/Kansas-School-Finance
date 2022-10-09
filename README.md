@@ -1,5 +1,5 @@
-# Kansas-School-Finance
+# Kansas School Finance
 
-Analysis of Kansas School Finance Data
+Analysis of Kansas School Finance data from the Kansas Department of Education.
 
-See articles on watchdoglab.substack.com
+See related articles on [watchdoglab.substack.com](https://watchdoglab.substack.com/)
