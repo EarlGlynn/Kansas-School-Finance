@@ -182,7 +182,7 @@ processYear <- function(filename)
 Create separate "wide" files for various fields in combined file
 
 ```{r}
-ExtractPerPupilWide <- function(field) 
+ExtractFieldWide <- function(field) 
 {
   districtsYears                               %>%
   select(SchoolYear, USD, `USD Name`, County, 
@@ -198,8 +198,9 @@ SetupPlotDensity <- function(districtsYears, field, name,
                              schoolYear = "2020-2021")
 {
   plotSetup <- 
-    districtsYears                                           %>%
-    filter(startsWith(USD, "D"), SchoolYear == schoolYear)   %>%
+    districtsYears                        %>%
+    filter(startsWith(USD, "D"),                # Exclude totals
+           SchoolYear == schoolYear)      %>%
   
     ggplot(aes(x = {{field}}, y = ..density..))                         + 
       geom_histogram(fill = "skyblue", colour = "grey80", bins = 20)    +
@@ -211,8 +212,13 @@ SetupPlotDensity <- function(districtsYears, field, name,
             subtitle   = paste(schoolYear, "school year"),
             x          = paste0(name, " Per Pupil [$]"),
             y         = "Density",
-            caption = c(SOURCE, stamp))     +                               
-      theme(plot.caption  = element_text(hjust=c(0.0, 1.0)))
+            caption = c(SOURCE, stamp)
+          )                             +                               
+      theme(
+             panel.grid.minor.x = element_blank(),
+             panel.grid.minor.y = element_blank(),
+             plot.caption  = element_text(hjust=c(0.0, 1.0))
+           )
   
   plotSetup
 }
@@ -228,14 +234,19 @@ SetupPlotDensity <- function(districtsYears, field, name,
 
 3. Selections
 
+* Report format:  Excel
+
 * Report:  Expenditures Per Pupil
+
+*Shows the Total Expenditures per Pupil for each district, and state totals, as well as expenditures per pupil for the Capital Outlay Fund, Bond & Interest Fund and All Other Funds combined.*
+
+Details in [Expenditures Per Pupil](https://www.ksde.org/Portals/0/School%20Finance/reports_and_publications/Expenditures/Expend%20Per%20Pupil%20Cover%2C%20State%20Totals.pdf) Report [11 pages]
 
 * School Year:  2007-2008 through 2020-2021
 
 * Display Report
 
 4. Save to Excel file:  Expenditures-Per-Pupil-yyyy-yyyy.xls
-
 
 ## Create list of Excel files
 
@@ -248,10 +259,6 @@ length(files)
 
 ```{r}
 files
-```
-
-```{r}
-filename <- files[1]
 ```
 
 ## Process Headers
@@ -358,7 +365,7 @@ districtsYears           %>%
 ## Data
 
 ```{r}
-FTEWide  <- ExtractPerPupilWide(`FTE Enroll`)
+FTEWide  <- ExtractFieldWide(`FTE Enroll`)
 nrow(FTEWide)
 ```                
 Sample data
@@ -396,7 +403,7 @@ SetupPlotDensity(districtsYears, `FTE Enroll`,  "")     +
 ### Data
 
 ```{r}
-CapitalOutlayExpendPerPupilWide  <- ExtractPerPupilWide(`Capital Outlay`)
+CapitalOutlayExpendPerPupilWide  <- ExtractFieldWide(`Capital Outlay`)
 nrow(CapitalOutlayExpendPerPupilWide)
 ```
 
@@ -427,7 +434,7 @@ SetupPlotDensity(districtsYears, `Capital Outlay`, "Capital Outlay")  +
 ### Data
 
 ```{r}
-BondInterestExpendPerPupilWide  <- ExtractPerPupilWide(`Bond Interest`)
+BondInterestExpendPerPupilWide  <- ExtractFieldWide(`Bond Interest`)
 nrow(BondInterestExpendPerPupilWide)
 ```
 
@@ -453,7 +460,7 @@ SetupPlotDensity(districtsYears, `Bond Interest`, "Bond Interest")
 ### Data
 
 ```{r}
-AllOthersExpendPerPupilWide  <- ExtractPerPupilWide(`All Others`)
+AllOthersExpendPerPupilWide  <- ExtractFieldWide(`All Others`)
 nrow(AllOthersExpendPerPupilWide)
 ```
 
@@ -480,7 +487,7 @@ SetupPlotDensity(districtsYears, `All Others`, "All Other Expenditures")
 ### Data
 
 ```{r}
-TotalExpendPerPupilWide  <- ExtractPerPupilWide(`Total Expend`)
+TotalExpendPerPupilWide  <- ExtractFieldWide(`Total Expend`)
 nrow(TotalExpendPerPupilWide)
 ```
 
