@@ -1,0 +1,758 @@
+---
+title: "Kansas School District Pupil-Teacher Ratios"
+author: "Earl F Glynn<br>"
+date: "<small>`r Sys.Date()`</small>"
+output:
+  html_document:
+    code_download: true
+    theme: cerulean
+    toc: yes
+    toc_depth:  3
+    toc_float:
+      collapsed:  yes
+      smooth_scroll: yes
+    number_sections: yes
+    code_folding:  show
+---
+
+```{r setup, echo = FALSE}
+# http://biostat.mc.vanderbilt.edu/wiki/Main/KnitrHtmlTemplate
+require(Hmisc)    # provides knitrSet and other functions
+knitrSet(lang = 'markdown',   # If using blogdown: knitrSet(lang='blogdown')
+         fig.align = 'left',
+         w = 8,
+         h = 4,
+         cache = FALSE)
+```
+
+`r hidingTOC(buttonLabel = "Outline")`
+
+```{r startYourEngines, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  comment = NA)
+
+time.1 <- Sys.time()
+```
+
+# Setup {.tabset .tabset-fade .tabset-pills}
+
+## {.active}
+
+## Constants
+
+```{r Constants}
+FILE_PREFIX   <- "Pupil-Teacher-Ratio"    # no spaces
+```
+
+Percentiles:  0% (min), 10%, 25%, 50% (median), 75%, 90%, 100% (max)
+
+```{r}
+quantiles <- quantiles <- c(0.0, 0.10, 0.25, 0.50, 0.75, 0.90, 1.00)
+```
+
+```{r}
+SOURCE <- "Source:  KSDE Data Central - School Finance Reports"
+stamp  <- paste("watchdoglab.substack.com  efg", format(Sys.time(), "%Y-%m-%d"))
+```
+
+```{r}
+EXCEL_LIMIT <- 2^20
+```
+
+## Packages
+
+```{r Packages}
+library(tidyverse)
+library(lubridate)
+```
+
+Display formatting
+
+```{r Display}
+library(kableExtra)  # kable_styling
+#library(IRdisplay)   # display_html (needed in Jupyter notebooks)
+```
+
+I/O
+
+```{r IO}
+library(readxl)      # read_xlsx
+library(readr)       # write_csv
+library(writexl)     # write_xlsx
+```
+
+ Graphics
+
+```{r Graphics}
+library(scales)      # comma, comma_format
+```
+
+## ggplot theme
+
+[ggplot Themes Gallery](https://www.datanovia.com/en/blog/ggplot-themes-gallery/)
+
+```{r ggplotTheme}
+theme_set(theme_minimal() +
+
+          theme(axis.text             = element_text(size = 10),
+                axis.title            = element_text(size = 14),
+
+                plot.caption          = element_text(hjust = c(0.0,1.0)),
+                plot.caption.position = "plot",   # R 4.0.0
+
+                plot.title.position   = "plot",
+                plot.title            = element_text(size = 13))
+           )
+
+COLOR_BAR     <- "skyblue"
+COLOR_OUTLINE <- "grey80"
+```
+
+## Helper functions
+
+```{r Helpers}
+Show <- function(data, caption="", bigMark="",
+                 height = NULL, width = NULL, ...)
+{
+  data                                       %>%
+  kable("html", caption=caption,
+        format.args=list(big.mark=bigMark))  %>%
+  kable_styling(bootstrap_options=c("striped", "bordered", "condensed"),
+                position="left",
+                full_width=FALSE, ...)       %>%
+  scroll_box(height = height, width = width)#%>%      # pixels
+# as.character()                             %>%      # Jupyter Only
+# display_html()                                      # Jupyter Only
+}
+```
+
+Redundant checks to verify the data format and content is the same across all files.
+
+row index is zero origin
+
+```{r}
+processHeader <- function(filename)
+{
+  header <- read_xls(filename, n_max = 4, col_names = FALSE)
+  
+  SchoolYear <- str_sub(filename, 21, 29)
+  
+  heading    <- header[3, 1, drop = TRUE]
+  
+  ColumnSchoolYear <- header[2, 1, drop = TRUE]
+  
+  USD           <- header[4, 1, drop = TRUE]
+  USDName       <- header[4, 2, drop = TRUE]
+  County        <- header[4, 3, drop = TRUE]
+  Licensed      <- header[4, 4, drop = TRUE]
+  SpecialEd     <- header[4, 5, drop = TRUE]
+  PK12          <- header[4, 6, drop = TRUE]
+  FTE           <- header[4, 7, drop = TRUE]
+  PupilTeacher <- header[4, 8, drop = TRUE]
+  
+  tibble(File = filename, 
+         SchoolYear = SchoolYear,
+         ColumnSchoolYear, 
+         heading = heading, 
+         USD, USDName, County, 
+         Licensed, SpecialEd, PK12, FTE, PupilTeacher)
+}
+```
+
+Assign column names here since files have school year in most columns and
+we need common columns names across all files.
+
+```{r}
+processYear <- function(filename)
+{
+  districts <- 
+    read_xls(filename, skip = 4, col_names = FALSE) %>%
+    rename(
+            USD               = ...1,
+            `USD Name`        = ...2,
+            County            = ...3,
+            LicensedPersonnel = ...4,
+            SpecialEd         = ...5,
+            PK12Teachers      = ...6,
+            FTE               = ...7,
+            PupilTeacherRatio = ...8
+          )                                         %>%
+    mutate(SchoolYear = str_sub(filename, 21, 29))  %>%
+    relocate(SchoolYear)
+    
+  districts
+}
+```
+
+Create separate "wide" files for various fields in combined file
+
+```{r}
+ExtractFieldWide <- function(districtsYears, field) 
+{
+  districtsYears                               %>%
+  select(SchoolYear, USD, `USD Name`, County, 
+         District, {{field}})                  %>%
+  pivot_wider(names_from   = SchoolYear,
+              values_from  = {{field}})        %>%
+  arrange(USD)  
+}
+```
+
+```{r}         
+SetupPlotDensity <- function(districtsYears, field, name,
+                             schoolYear = "2020-2021")
+{
+  plotSetup <- 
+    districtsYears                                 %>%
+    filter(SchoolYear == schoolYear,
+           USD != "D0999")                         %>%   # Exclude totals
+  
+    ggplot(aes(x = {{field}}, y = ..density..))                         + 
+      geom_histogram(fill = "skyblue", colour = "grey80", bins = 20)    +
+      geom_density()                                                    +
+      scale_x_log10(breaks = c(  10,   20,   30,    40, 50,
+                                100,  200,  300,       500, 
+                               1000, 2000,        4000), 
+                    labels = comma)                                     +
+      labs(
+            title      = paste0("Kansas School Districts - ", name),
+            subtitle   = paste(schoolYear, "school year"),
+            x          = paste("Number of", name),
+            y          = "Density",
+            caption = c(SOURCE, stamp))     +                               
+      theme(
+             panel.grid.minor.x = element_blank(),
+             panel.grid.minor.y = element_blank(),
+             plot.caption  = element_text(hjust=c(0.0, 1.0))
+           )
+  
+  plotSetup
+}
+```
+
+# Extract from Excel Files
+
+## Data Source 
+
+1. Start on this page:  [Kansas Department of Education Data Central](https://datacentral.ksde.org/)
+
+2. School Finance Reports / [School Finance Reports Warehouse](https://datacentral.ksde.org/school_finance_reports.aspx)
+
+3. Selections
+
+* Report format:  Excel
+
+* Report:  Pupil-Teacher Ratio
+
+*Shows the unaudited FTE (Full Time Equivalency) of Licensed Personnel, Special Education Teachers, and PK-12 Teachers then gives the pupil-teacher ratio for all districts including state totals.*
+
+*The student FTE enrollment on the most recent year's report is subject to change as audits are processed during the current school year through the end of May.  FTE on all prior years' reports is audited.*
+
+Details in [Pupil-Teacher Ratio](https://www.ksde.org/Portals/0/School%20Finance/SelectedStats/SelSchStats_Dist%20Intro.pdf) Report [7 pages]
+
+* School Year:  2007-2008 through 2021-2022
+
+* Display Report
+
+4. Save to Excel file:  Pupil-Teacher-Ratio-yyyy-yyyy.xls
+
+
+## Create list of Excel files
+
+```{r}
+ files <- 
+  list.files(path = ".", pattern = glob2rx("Pupil-Teacher-Ratio-*.xls")) 
+
+length(files)
+```
+
+```{r}
+files
+```
+
+## Process Headers
+
+Verify `File` names and `SchoolYear` values in header are consistent.
+
+```{r}
+headerInfo <-
+  files  %>%
+  map_df(processHeader)
+
+dim(headerInfo)
+```
+
+Make sure heading is the same for all files.
+
+```{r}
+headerInfo %>% Show(height = "200px")
+```
+
+```{r}
+all( (paste0(str_sub(headerInfo$SchoolYear, 1, 5), str_sub(headerInfo$SchoolYear, 6, 9)) == 
+      headerInfo$ColumnSchoolYear) %>% as.vector() )
+```
+
+```{r}
+all( (headerInfo$heading == "Pupil-Teacher Ratio") %>% as.vector() )
+```
+
+```{r}
+all( (headerInfo$USD == "Org #") %>% as.vector() )
+```
+
+```{r}
+all( (headerInfo$USDName == "Organization Name") %>% as.vector() )
+```
+
+```{r}
+all( (headerInfo$County == "County Name") %>% as.vector() )
+```
+
+```{r}
+all( (headerInfo$Licensed == "Licensed Personnel") %>% as.vector() )
+```
+
+```{r}
+all( (headerInfo$FTE == "FTE Enrollment") %>% as.vector() )
+```
+
+Note "Education" is misspeed in all the headings
+
+```{r}
+all( (headerInfo$SpecialEd == "Special Eduation Teachers") %>% as.vector() )
+```
+
+```{r}
+all( (headerInfo$PK12 == "PK-12\nTeachers") %>% as.vector() )
+```
+
+```{r}
+all( (headerInfo$PupilTeacher == "Pupil- Teacher Ratio") %>% as.vector() )
+```
+
+With `TRUE` for all the above checks, let's assume we can assign column names 
+
+## Process USD data 
+
+```{r}
+districtsYears <-
+  files  %>%
+  map_dfr(processYear)
+
+dim(districtsYears)
+```
+
+```{r}
+glimpse(districtsYears)
+```
+
+Use County == "Totals" (instead of USD = "TOTALS")
+
+## Sample data
+
+Recall USD Names are not unique.  `Blue Valley` school district is in both Johnson and Riley counties.
+
+```{r}
+districtsYears  %>%  head(3)  %>%  Show(bigMark = ",")
+```
+
+Let's combine `USD Name` and `County` into single `District` field, which will be unique.
+
+```{r}
+districtsYears <- 
+  districtsYears    %>%
+  mutate(District = paste0(`USD Name`, " [", County, "]") )
+```
+
+```{r}
+districtsYears  %>%  head(3)  %>%  Show(bigMark = ",")
+```
+
+## Write combined raw data to file
+
+### Long Format
+
+```{r}
+write_xlsx(districtsYears, 
+           paste0(FILE_PREFIX, "-by-School-District-LongFormat.xlsx"))
+```
+
+## Summary stats
+
+```{r}
+districtsYears           %>%
+  summarize( 
+             n           = n(),
+             nSchoolYear = n_distinct(SchoolYear),
+             nUSD        = n_distinct(USD),
+             nUSDname    = n_distinct(`USD Name`),
+             nCounty     = n_distinct(County),
+             nDistrict   = n_distinct(District)
+           )             %>%
+  Show()
+```
+
+
+# Fields
+
+## Licensed Personnel
+
+### Data
+
+```{r}
+LicensedPersonnelWide  <- ExtractFieldWide(districtsYears, LicensedPersonnel)
+nrow(LicensedPersonnelWide)
+```
+
+Sample data   
+
+```{r}
+LicensedPersonnelWide  %>%  head(3)  %>%  Show(caption = "Licensed Personnel")
+```
+
+```{r}
+write_xlsx(LicensedPersonnelWide, 
+           "By-School-District-Licensed-Personnel-WideFormat.xlsx")
+```
+
+### Density Plot - Latest Year
+
+```{r LicensedPersonnel_Density} 
+SetupPlotDensity(districtsYears, LicensedPersonnel, "Licensed Personnel")  
+```
+
+## Special Education Teachers
+
+### Data
+
+```{r}
+SpecialEducationWide  <- ExtractFieldWide(districtsYears, SpecialEd)
+nrow(SpecialEducationWide)
+```
+
+Sample data
+
+```{r}
+SpecialEducationWide  %>%  head(3)  %>%  Show(caption = "Special Education Teachers")
+```
+
+```{r}
+write_xlsx(SpecialEducationWide,
+           "By-School-District-Special-Education-WideFormat.xlsx")
+```
+                         
+
+### Density Plot - Latest Year
+
+```{r SpecialEd_Density} 
+SetupPlotDensity(districtsYears, SpecialEd, "Special Education Teachers")  
+```
+
+## PK-12 Teachers
+
+### Data
+
+```{r}
+PK12TeachersWide  <- ExtractFieldWide(districtsYears, PK12Teachers)
+nrow(PK12TeachersWide)
+```
+
+Sample data
+
+```{r}
+PK12TeachersWide  %>%  head(3)  %>%  Show(caption = "PK-12 Teachers")
+```
+
+```{r}
+write_xlsx(PK12TeachersWide,
+           "By-School-District-PK12-Teachers-WideFormat.xlsx")
+```
+                                                             
+### Density Plot - Latest Year
+
+```{r PK12Teachers_Density} 
+SetupPlotDensity(districtsYears, PK12Teachers, "PK-12 Teachers")  
+```
+
+## Full-Time Equivalent Enrollment
+
+### Data
+
+```{r}
+FullTimeEquivalentWide  <- ExtractFieldWide(districtsYears, FTE)
+nrow(FullTimeEquivalentWide)
+```
+
+Sample data
+
+```{r}
+FullTimeEquivalentWide  %>%  head(3)  %>%  Show(caption = "Full-Time Equivalent Enrollment")
+```
+
+```{r}
+write_xlsx(FullTimeEquivalentWide,
+           "By-School-District-Full-Time-Equivalent-Enrollment-WideFormat.xlsx")
+```
+                                                                      
+### Density Plot - Latest Year
+
+```{r FTE_Density} 
+SetupPlotDensity(districtsYears, FTE, "Full-Time Equivalent Enrollment")  +
+  scale_x_log10(breaks = c(     100,   300,   500,           # override default
+                               1000,  3000,  5000, 
+                              10000, 30000, 50000),
+                  labels = comma)                       +
+    labs(title = "Kansas School Districts - Full-Time Equivalent Enrollment",
+         x = "FTE Enrollment")                        
+```
+
+## Pupil-Teacher Ratio
+
+Enrollment / PK-12 Teachers = Pupil-Teacher Ratio
+
+### Data
+
+```{r}
+PupilTeacherRatioWide  <- ExtractFieldWide(districtsYears, PupilTeacherRatio)
+nrow(PupilTeacherRatioWide)
+```
+
+Sample data
+
+```{r}
+PupilTeacherRatioWide  %>%  head(3)  %>%  Show(caption = "Pupil-Teacher Ratio")
+```
+
+```{r}
+write_xlsx(PupilTeacherRatioWide,
+           "By-School-District-Pupil-Teacher-Ratio-WideFormat.xlsx")
+```
+                                                                       
+### Density Plot - Latest Year
+
+```{r PupilTeacherRatio_Density} 
+SetupPlotDensity(districtsYears, PupilTeacherRatio, "Enrollment / PK-12 Teachers = Pupil-Teacher Ratio")  +
+  scale_x_continuous(breaks = 5 * 0:12)        +
+  labs(x = "Pupil-Teacher Ratio")
+```
+
+# State Summary by School Year
+
+```{r}
+yearSummary <- 
+  districtsYears           %>%
+  filter(USD == "D0999")   %>%
+  select(SchoolYear, 
+         FTE, PupilTeacherRatio,
+         LicensedPersonnel, SpecialEd, PK12Teachers)  %>%
+  mutate(
+          BeginYear = ymd( paste0( str_sub(SchoolYear, 1, 4), "-07-01")),
+          MidYear   = ymd( paste0( str_sub(SchoolYear, 6, 9), "-01-01"))
+        )           %>%
+  relocate(BeginYear, MidYear)
+
+dim(yearSummary)
+```
+```{r}
+yearSummary %>% Show(bigMark = ",")
+```
+
+Data above is slightly different from FTE data in Notebook `10-Expenditures-Per-Pupil.html`
+
+```{r}
+write_xlsx(yearSummary %>% select(-MidYear), 
+           paste0(FILE_PREFIX, "-Summary-by-School-Year.xlsx"))
+```
+
+## Governor information
+
+```{r}
+governor <-
+  tibble(
+          Name = c("Sebelius", "Parkinson", "Brownback",
+                   "Colyer", "Kelly"),
+          
+          TermStart = ymd("2007-07-01",  # for plotting purposes 
+                          "2009-04-28", "2011-01-10", 
+                          "2018-01-31", "2019-01-14"),
+          
+          TermEnd   = ymd("2009-04-28", "2011-01-10", "2018-01-31",
+                          "2019-01-14", 
+                          "2022-07-01"),  # for plotting purposes,
+          
+          fraction1  = c(1.00, 0.93, 1.00, 0.93, 1.00),
+          fraction2  = c(1.00, 0.60, 1.00, 0.60, 1.00), 
+          fraction3  = c(1.00, 0.97, 1.00, 0.97, 1.00),
+          
+          Party      = c("D", "D", "R", "R", "D")
+        )
+
+Brownback <- governor %>% filter(Name == "Brownback")
+```
+
+## FTE State Summary by Year
+
+```{r FTESummary}
+ggplot(data = yearSummary) +
+  geom_col(aes(x = MidYear, y = `FTE`),
+           fill = "skyblue", colour = "grey80") +
+  labs(title    = paste("FTE Enrollment of All Kansas School Districts",
+                        "by School Year"),
+       x = "Year",
+       y = "Full-Time Equivalent Enrollment",
+       caption = c(SOURCE, stamp))              +
+  scale_y_continuous(labels = scales::comma,
+                     breaks = 100000 * 0:5)     +
+  theme(axis.text.x = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        legend.position = "none")               +
+  geom_text(data = yearSummary,
+            aes(x = MidYear, y = 0,
+                label = SchoolYear),
+                vjust = 0.5, hjust = -0.1, size = 4, angle = 90)   +
+  geom_segment(data = governor,
+               aes(x = TermStart,  y    =  fraction1 * max(yearSummary$FTE) * 1.1,
+               xend = TermEnd,     yend =  fraction1 * max(yearSummary$FTE) * 1.1,
+               color = Party), size = 2)        +
+  geom_text(data = governor,
+            aes(x = TermStart, y =  1.02 * fraction1 * max(yearSummary$FTE) * 1.1,
+                label = Name),
+                vjust = 0.0, hjust = 0, size = 5)  +
+  scale_color_manual(values = c("D" = "blue", "R" = "red"))  +
+  geom_vline(xintercept = c(Brownback$TermStart, Brownback$TermEnd),
+             color = "red", linetype = "dashed")
+```                  
+
+Need to extend lastStep for the last year
+
+```{r}
+lastStep <- tail(yearSummary, 1) 
+lastStep$BeginYear <- lastStep$BeginYear + years(1)
+```
+
+## Pupil-Teacher Ratio
+
+```{r PupilTeacherRatio}
+yMin <- 12
+
+bind_rows(yearSummary, lastStep)  %>%  # show full lastStep
+
+  ggplot() +
+    geom_step(aes(x = BeginYear, 
+                  y = PupilTeacherRatio),
+              size = 2, color = "skyblue") +
+    labs(title    = paste("Pupil-Teacher Ratio of All Kansas School Districts",
+                          "by School Year"),
+         x = "Year",
+         y = "Pupil-Teacher Ratio",
+         caption = c(SOURCE, stamp))              +
+    scale_y_continuous(limits = c(yMin, 17.5),
+                       breaks = yMin:17)          +
+    theme(axis.text.x = element_blank(),
+          panel.grid.major.x = element_blank(),
+          panel.grid.minor.x = element_blank(),
+          legend.position = "none")               +
+    geom_text(data = yearSummary,
+              aes(x = MidYear, y = yMin,
+                  label = SchoolYear),
+                  vjust = 0.5, hjust = -0.1, size = 4, angle = 90)  +
+    geom_segment(data = governor,
+                 aes(x = TermStart,  y    =  fraction3 * max(yearSummary$PupilTeacherRatio) * 1.1,
+                 xend = TermEnd,     yend =  fraction3 * max(yearSummary$PupilTeacherRatio) * 1.1,
+                 color = Party), size = 2)        +
+    geom_text(data = governor,
+              aes(x = TermStart, y =  1.01 * fraction3 * max(yearSummary$PupilTeacherRatio) * 1.1,
+                  label = Name),
+                  vjust = 0.0, hjust = 0, size = 5)  +
+    scale_color_manual(values = c("D" = "blue", "R" = "red"))  +
+    geom_vline(xintercept = c(Brownback$TermStart, Brownback$TermEnd),
+               color = "red", linetype = "dashed")
+```                    
+  
+## School District Staffing
+
+```{r}
+staffing <- 
+  tibble(Year  = rep(yearSummary$BeginYear[1], 3),
+         Value = c(yearSummary$LicensedPersonnel[1],
+                   yearSummary$PK12Teachers[1],
+                   yearSummary$SpecialEd[1]),
+         Label = c("Licensed Personnel", "PK-12 Teachers", "Special Education Teachers"),
+         color = c("chartreuse", "darkorchid", "skyblue"))
+
+staffing  %>%  Show()
+```
+
+
+```{r SchoolStaffingRatio}
+yMin <- 0
+
+bind_rows(yearSummary, lastStep)  %>%  # show full lastStep
+
+  ggplot() +
+    geom_step(aes(x = BeginYear, 
+                  y = LicensedPersonnel),
+              size = 2, color = "chartreuse") +
+    geom_step(aes(x = BeginYear, 
+                  y = PK12Teachers),
+              size = 2, color = "darkorchid") +
+    geom_step(aes(x = BeginYear, 
+                  y = SpecialEd),
+              size = 2, color = "skyblue") +
+    labs(title    = paste("School District Staff in All Kansas School Districts",
+                          "by School Year"),
+         x = "Year",
+         y = "Staff Size",
+         caption = c(SOURCE, stamp))              +
+    scale_y_continuous(labels = scales::comma,
+                       breaks = 10000 * 0:5,
+                       limits = c(0, 50000))     +
+    theme(axis.text.x = element_blank(),
+          panel.grid.major.x = element_blank(),
+          panel.grid.minor.x = element_blank(),
+          legend.position = "none")               +
+    geom_text(data = yearSummary,
+              aes(x = MidYear, y = 5000,
+                  label = SchoolYear),
+                  vjust = 0.5, hjust = -0.1, size = 4, angle = 90)  +
+    geom_text(data = staffing,
+              aes(x = Year, y = Value, label = Label),
+              vjust = 1.5, hjust = 0, color = staffing$color)  + 
+    geom_segment(data = governor,
+                 aes(x = TermStart,  y    =  fraction1 * max(yearSummary$LicensedPersonnel) * 1.1,
+                 xend = TermEnd,     yend =  fraction1 * max(yearSummary$LicensedPersonnel) * 1.1,
+                 color = Party), size = 2)        +
+    geom_text(data = governor,
+              aes(x = TermStart, y =  1.01 * fraction1 * max(yearSummary$LicensedPersonnel) * 1.1,
+                  label = Name),
+                  vjust = 0.0, hjust = 0, size = 5)  +
+    scale_color_manual(values = c("D" = "blue", "R" = "red"))  +
+    geom_vline(xintercept = c(Brownback$TermStart, Brownback$TermEnd),
+               color = "red", linetype = "dashed")
+```                    
+  
+# Epilog {.tabset .tabset-fade .tabset-pills}
+
+## {.active}
+
+## Session Info
+
+```{r devtoolsSessionInfo}
+devtools::session_info()
+```
+
+</div>
+
+```{r epilogDeltaTime, echo=FALSE}
+time.2 <- Sys.time()
+processingTime <- paste("Processing time:", sprintf("%.1f",
+                        as.numeric(difftime(time.2,
+                                            time.1, units="secs"))), "secs\n")
+```
+
+`r processingTime`
+`r format(time.2, "%Y-%m-%d %H%M")`
+
