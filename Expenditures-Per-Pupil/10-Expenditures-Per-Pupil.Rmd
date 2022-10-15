@@ -395,7 +395,6 @@ SetupPlotDensity(districtsYears, `FTE Enroll`,  "")     +
          x = "FTE Enrollment")                        
 ```
 
-
 # Expenditures Per Pupil
 
 ## Capital Outlay
@@ -427,7 +426,6 @@ SetupPlotDensity(districtsYears, `Capital Outlay`, "Capital Outlay")  +
                       breaks = 1000 * 0:6,
                       limits = c(0, 7000))                         
 ```
-
 
 ## Bond Interest
 
@@ -480,7 +478,6 @@ write_xlsx(AllOthersExpendPerPupilWide,
 ```{r Other_Expenditures_Density} 
 SetupPlotDensity(districtsYears, `All Others`, "All Other Expenditures")  
 ```
-
 
 ## Total Expenditures
 
@@ -648,7 +645,6 @@ write_xlsx(yearSummaryBreakdown %>% select(-MidYear),
            paste0(FILE_PREFIX, "-Total-Expenditures-Summary-Breakdown-by-School-Year.xlsx"))
 ```                      
 
-
 ```{r}
 yearSummaryBreakdownLong <- 
   yearSummaryBreakdown    %>%
@@ -694,7 +690,6 @@ ggplot(data = yearSummaryBreakdownLong)                 +
   geom_vline(xintercept = c(Brownback$TermStart, Brownback$TermEnd),
              color = "red", linetype = "dashed")
 ```                  
-```
 
 # Epilog {.tabset .tabset-fade .tabset-pills}
 
